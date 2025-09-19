@@ -5,127 +5,50 @@ import time
 import re
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
-from netsuite_auth import NetSuiteAuth
+from .netsuite_auth import NetSuiteAuth
 
-@dataclass
-class AppSettings:
-    method: str
-    endpoint: str
-    signature_method: str
-
-@dataclass
-class DataSourceDto:
-    account_id: str
-    consumer_key: str
-    consumer_secret: str
-    token_key: str
-    token_secret: str
 
 def run_suite_ql_http_client(
-    suite_ql_query: str,
-    app_settings: AppSettings,
-    auth: DataSourceDto,
-    limit: Optional[str] = None,
-    offset: Optional[str] = None
+    suite_ql_query:str,
+    limit: Optional[str] = 1000,
+    offset: Optional[str] = 0
 ) -> str:
-    """
-    Executes a SuiteQL query against NetSuite's REST API
     
-    Args:
-        suite_ql_query: The SuiteQL query to execute
-        app_settings: Application settings containing method and endpoint info
-        auth: Authentication credentials for NetSuite
-        limit: Optional limit for query results
-        offset: Optional offset for query results
-        
-    Returns:
-        JSON string containing the query results with column aliases
-    """
-    
-    # Construct the base URL
-    url_string = f"{app_settings.method}{auth.account_id}{app_settings.endpoint}query/v1/suiteql"
-    
-    # Build query parameters
-    query_params = []
-    if limit:
-        query_params.append(f"limit={limit}")
-    if offset:
-        query_params.append(f"offset={offset}")
-    
-    # Append query parameters to URL if any exist
-    if query_params:
-        url_string += "?" + "&".join(query_params)
-    
-    # Prepare request body
-    body = {"q": suite_ql_query}
-    json_body = json.dumps(body)
-    
-    # Generate OAuth parameters
-    timestamp = str(int(time.time()))
-    nonce = str(random.randint(123400, 9999999))
-    
-    # Create data dictionary for signature generation (matching C# logic)
-    query = ""
-    data = {query if query != "" else "": query} if query else {}
-    
-    # Generate OAuth signature using your NetSuiteAuth class
-    signature = NetSuiteAuth.generate_signature(
-        "POST", url_string,
-        auth.consumer_key, auth.consumer_secret,
-        auth.token_key, auth.token_secret,
-        timestamp, nonce, data
-    )
-    
-    # Build authorization header using your NetSuiteAuth class
-    net_suite_authorization = NetSuiteAuth.build_rest_auth(
-        auth.account_id, auth.consumer_key,
-        auth.token_key, app_settings.signature_method,
-        timestamp, nonce, signature
-    )
-    
-    # Get column aliases from SQL query
-    aliases = get_aliases(suite_ql_query)
-    
-    # Make HTTP request
-    headers = {
-        "prefer": "transient",
-        "Authorization": net_suite_authorization,
-        "Content-Type": "application/json"
-    }
-    
-    response = requests.post(url_string, data=json_body, headers=headers)
-    response_content = response.text
-    
-    # Parse and modify response
-    response_object = json.loads(response_content)
-    response_object["columns"] = aliases
-    
-    # Return modified response
-    return json.dumps(response_object)
+    nsAccountID = "627386"
+    consumerKey = "7d84f4f4c4cac7b7689facf5ab387bd896723ae7ce748bf5dbdb89e1f593fa55"
+    consumerSecret = "8b58da4ec2daa13b3f41729321fdfa080f5685a94f6b8273f7091f9fae70cca0"
+    token = "9026f8433cb32c15cb6bebd32f3e8115bc60522d7c12a257fbe4536e3bf5c511"
+    tokenSecret = "093f4afc4111ba1016d7788a34ab56f6451be7476e1fd93d2d3009ec9867436b"
+    base_url = "https://627386.suitetalk.api.netsuite.com/services/rest/query/v1/suiteql"
+    Nonce = NetSuiteAuth._generateNonce(length=11)
+    currentTime = NetSuiteAuth._generateTimestamp()
 
-def get_aliases(sql_query: str) -> List[str]:
-    """
-    Extract column aliases from SQL query
+    signature = NetSuiteAuth._generateSignature('POST', base_url, consumerKey, Nonce, currentTime, token, consumerSecret, tokenSecret, offset)
+
     
-    Args:
-        sql_query: The SQL query string
-        
-    Returns:
-        List of column aliases found in the query
-    """
-    aliases = []
+    body = {
+                "q": str(suite_ql_query)
+            }   
+    payload = json.dumps(body)    
+    oauth = "OAuth realm=\"" + nsAccountID + "\"," \
+            "oauth_consumer_key=\"" + consumerKey + "\"," \
+            "oauth_token=\"" + token + "\"," \
+            "oauth_signature_method=\"HMAC-SHA256\"," \
+            "oauth_timestamp=\"" + currentTime + "\"," \
+            "oauth_nonce=\"" + Nonce + "\"," \
+            "oauth_version=\"1.0\"," \
+            "oauth_signature=\"" + signature + "\""
     
-    # Clean up the query - replace newlines and carriage returns with spaces, then trim
-    sql_query = sql_query.replace("\n", " ").replace("\r", " ").strip()
-    
-    # Updated regex to match aliases with double quotes, single quotes, backticks, or no quotes
-    pattern = r'\s+AS\s+(?:["`\']([^"`\']+)["`\']|(\w+))'
-    
-    matches = re.finditer(pattern, sql_query, re.IGNORECASE)
-    
-    for match in matches:
-        # Group 1 captures quoted aliases, Group 2 captures unquoted aliases
-        alias = (match.group(1) if match.group(1) else match.group(2)).strip()
-        aliases.append(alias)
-    
-    return aliases
+    headers = {
+        'prefer':'transient',
+        'Content-Type': "application/json",
+        'Authorization': oauth,
+        'cache-control': "no-cache",
+    }
+
+    response = requests.request("POST", base_url + '?offset=' + str(offset), data=payload, headers=headers)
+    try:
+        return response.json()
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON response", "raw": response.text}
+#json.loads(response.text)

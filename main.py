@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from typing import List, Union
 import requests
 import numpy as np
+import pyodbc
+
 from sklearn.linear_model import LinearRegression
 
 # 🔹 Import services
@@ -25,6 +27,31 @@ class SqlRequest(BaseModel):
 class PromptResponse(BaseModel):
     result: List[List[Union[str, float]]]
 
+@app.get("/transactions")
+def get_transactions(limit: int = 5):
+    try:
+        # Connect to NetSuite ODBC
+        conn = pyodbc.connect(f"DSN=NetSuite;UID=netsuite.webservice@biobridgeglobal.org;PWD=BBGNetsuite@2025")
+        cursor = conn.cursor()
+
+        # Run SQL query
+        query = f"SELECT TOP 10 * from transaction"
+        cursor.execute(query)
+
+        # Fetch column names
+        columns = [col[0] for col in cursor.description]
+
+        # Fetch all rows and map into dicts
+        rows = cursor.fetchall()
+        result = [dict(zip(columns, row)) for row in rows]
+
+        conn.close()
+
+        return {"data": result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Main Endpoint
 @app.post("/process", response_model=PromptResponse)
 def process_prompt(req: PromptRequest):
@@ -45,11 +72,14 @@ def process_prompt(req: PromptRequest):
 
     return PromptResponse(result=[["Unsupported prompt. Try: 'Forecast sales', 'Detect anomalies', 'Check overdue invoices'."]])
 
-@app.post("/sql", response_model=PromptResponse)
+@app.post("/sql")
 def process_prompt(req: SqlRequest):
-    sql = req.sql.lower()                
+    try:
+        sql = req.query.lower()                
 
-    return PromptResponse(result=run_suite_ql_http_client(sql,))
+        return run_suite_ql_http_client(sql)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
